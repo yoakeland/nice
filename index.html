@@ -102,9 +102,11 @@ function spawnObject(x, y) {
     angle: Common.random(0, Math.PI * 2)
   });
 
-  // draw size follows image aspect ratio, fit within a circle of this radius
-  // scale so the larger of width/height roughly matches diameter * 1.15 (slight overhang looks natural for plush ears etc)
-  const drawH = baseDiameter * 1.25;
+  // draw size follows image aspect ratio, drawn larger than the collision
+  // circle so neighboring plushies visually overlap into the gap left
+  // between touching circles (circles only touch at a single point,
+  // so a tight fit here leaves visible empty space in a packed pile)
+  const drawH = baseDiameter * 1.35;
   const drawW = drawH * IMG_ASPECT;
 
   bodyMeta.set(body.id, { drawW, drawH, squash: 1 });
@@ -186,8 +188,10 @@ function startHold(x, y) {
 
   holdTimeout = setTimeout(() => {
     spawnInterval = setInterval(() => {
-      // small horizontal jitter so repeated spawns don't stack in a perfect column
-      const jitter = Common.random(-14, 14);
+      // horizontal jitter so repeated spawns spread out instead of
+      // stacking nearly on top of each other (which causes a jarring
+      // "pop apart" once the solver resolves the overlap)
+      const jitter = Common.random(-32, 32);
       spawnObject(lastPointer.x + jitter, lastPointer.y);
     }, SPAWN_COOLDOWN);
   }, HOLD_DELAY);
