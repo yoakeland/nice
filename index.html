@@ -87,6 +87,14 @@ let imgLoaded = false;
 img.onload = () => { imgLoaded = true; };
 img.src = IMG_SRC;
 
+// ultra-rare (1/250) alternate plushie
+const RARE_IMG_SRC = "tannhauser.png";
+const RARE_IMG_ASPECT = 0.6871; // width / height
+const rareImg = new Image();
+let rareImgLoaded = false;
+rareImg.onload = () => { rareImgLoaded = true; };
+rareImg.src = RARE_IMG_SRC;
+
 const bodyMeta = new Map();
 const spawnOrder = []; // tracks spawn order so we know which is oldest
 const MAX_PLUSHIES = 100;
@@ -113,20 +121,30 @@ function spawnObject(x, y) {
     angle: Common.random(0, Math.PI * 2)
   });
 
+  // rarity rolls, rarest first and mutually exclusive: 1-in-250 alternate
+  // plushie image, otherwise 1-in-100 gold, otherwise 1-in-20 random color
+  const isRareImage = Math.random() < 1 / 250;
+  const isGold = !isRareImage && Math.random() < 1 / 100;
+  const isRareColor = !isRareImage && !isGold && Math.random() < 1 / 20;
+
   // draw size follows image aspect ratio, drawn larger than the collision
   // circle so neighboring plushies visually overlap into the gap left
   // between touching circles (circles only touch at a single point,
   // so a tight fit here leaves visible empty space in a packed pile)
+  const aspect = isRareImage ? RARE_IMG_ASPECT : IMG_ASPECT;
   const drawH = baseDiameter * 1.35;
-  const drawW = drawH * IMG_ASPECT;
 
-  // rarity roll: 1-in-100 gold (rarer, checked first), otherwise a
-  // 1-in-20 chance of a random color tint. Rendered onto its own isolated
-  // offscreen canvas — tinting directly on the shared main canvas would
-  // paint over whatever pixels happen to already be there (i.e. neighboring
-  // plushies), not just this one's shape.
-  const isGold = Math.random() < 1 / 100;
-  const isRareColor = !isGold && Math.random() < 1 / 20;
+  // tannhauser's art is naturally narrower/portrait-shaped than the round
+  // main plushie, which read as "skinny" next to it even at the same
+  // height. Deliberately widen it beyond its true aspect ratio here —
+  // trading a bit of accuracy for a visual match with the rest of the pile.
+  const widthBoost = isRareImage ? 1.3 : 1;
+  const drawW = drawH * aspect * widthBoost;
+
+  // Tint effects (gold / random color) only apply to the normal plushie —
+  // rendered onto its own isolated offscreen canvas, since tinting directly
+  // on the shared main canvas would paint over whatever pixels happen to
+  // already be there (i.e. neighboring plushies), not just this one's shape.
   let spriteCanvas = null;
   if ((isGold || isRareColor) && imgLoaded) {
     spriteCanvas = document.createElement('canvas');
@@ -178,7 +196,7 @@ function spawnObject(x, y) {
     }
   }
 
-  bodyMeta.set(body.id, { drawW, drawH, squash: 1, spriteCanvas, sparkles });
+  bodyMeta.set(body.id, { drawW, drawH, squash: 1, spriteCanvas, sparkles, isRareImage });
   spawnOrder.push(body);
   Composite.add(world, body);
 }
@@ -192,8 +210,8 @@ Events.on(engine, 'collisionStart', (event) => {
         const speed = Math.min(Math.hypot(b.velocity.x, b.velocity.y), 18);
         if (speed > 1.5) {
           // ground landings squish a bit more than plushie-on-plushie bumps
-          const strength = isGroundHit ? speed / 24 : speed / 34;
-          meta.squash = Math.max(isGroundHit ? 0.6 : 0.72, 1 - strength);
+          const strength = isGroundHit ? speed / 46 : speed / 60;
+          meta.squash = Math.max(isGroundHit ? 0.85 : 0.9, 1 - strength);
         }
       }
     }
@@ -239,7 +257,7 @@ function render() {
     // plushie's current tumble angle, so landings read as a real squish
     // against the floor instead of a squish along a spinning axis
     const scaleY = meta.squash;
-    const scaleX = 1 + (1 - meta.squash) * 0.6;
+    const scaleX = 1 + (1 - meta.squash) * 0.35;
 
     ctx.save();
     ctx.translate(x, y);
@@ -250,8 +268,11 @@ function render() {
     ctx.shadowBlur = 10;
     ctx.shadowOffsetY = 4;
 
-    if (imgLoaded) {
-      const source = meta.spriteCanvas || img;
+    const baseImg = meta.isRareImage ? rareImg : img;
+    const baseLoaded = meta.isRareImage ? rareImgLoaded : imgLoaded;
+
+    if (baseLoaded) {
+      const source = meta.spriteCanvas || baseImg;
       ctx.drawImage(source, -meta.drawW/2, -meta.drawH/2, meta.drawW, meta.drawH);
 
       if (meta.sparkles) {
