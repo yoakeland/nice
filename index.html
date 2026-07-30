@@ -88,10 +88,21 @@ img.onload = () => { imgLoaded = true; };
 img.src = IMG_SRC;
 
 const bodyMeta = new Map();
+const spawnOrder = []; // tracks spawn order so we know which is oldest
+const MAX_PLUSHIES = 100;
 
 function spawnObject(x, y) {
+  // enforce the cap by removing the oldest plushie before adding a new one
+  if (spawnOrder.length >= MAX_PLUSHIES) {
+    const oldestBody = spawnOrder.shift();
+    if (oldestBody) {
+      Composite.remove(world, oldestBody);
+      bodyMeta.delete(oldestBody.id);
+    }
+  }
+
   // collision radius: base size with slight random variety
-  const baseDiameter = Common.random(36, 54);
+  const baseDiameter = Common.random(110, 150);
   const radius = baseDiameter / 2;
 
   const body = Bodies.circle(x, y, radius, {
@@ -110,6 +121,7 @@ function spawnObject(x, y) {
   const drawW = drawH * IMG_ASPECT;
 
   bodyMeta.set(body.id, { drawW, drawH, squash: 1 });
+  spawnOrder.push(body);
   Composite.add(world, body);
 }
 
