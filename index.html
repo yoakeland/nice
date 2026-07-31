@@ -38,11 +38,57 @@
     -webkit-user-select: none;
     user-select: none;
   }
+
+  /* secret button: invisible until hovered, tucked in the corner */
+  #secretToggle {
+    position: fixed;
+    bottom: 0;
+    right: 0;
+    width: 34px;
+    height: 34px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.25s ease, background 0.25s ease;
+  }
+  #secretToggle:hover,
+  #secretToggle:focus-visible {
+    opacity: 1;
+    background: var(--accent-soft);
+  }
+
+  #secretToast {
+    position: fixed;
+    bottom: 40px;
+    right: 12px;
+    padding: 10px 16px;
+    border-radius: 12px;
+    background: var(--ink);
+    color: #FFF3B0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.01em;
+    box-shadow: 0 6px 18px rgba(16,25,46,0.3);
+    z-index: 101;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(6px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  #secretToast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
 </style>
 </head>
 <body>
 
 <canvas id="world"></canvas>
+<button id="secretToggle" aria-label="secret"></button>
+<div id="secretToast"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 <script>
@@ -67,12 +113,26 @@ let ground, leftWall, rightWall;
 function buildBounds() {
   Composite.remove(world, [ground, leftWall, rightWall].filter(Boolean));
   const t = 60;
-  ground = Bodies.rectangle(canvas.width/2, canvas.height + t/2 - 8, canvas.width + t*2, t, WALL_OPTS);
+  // ground is built extra-wide so it still spans the full play area even
+  // at max zoom-out, once the walls below move far apart
+  ground = Bodies.rectangle(canvas.width/2, canvas.height + t/2 - 8, canvas.width * 14, t, WALL_OPTS);
   leftWall = Bodies.rectangle(-t/2 + 4, canvas.height/2, t, canvas.height*3, WALL_OPTS);
   rightWall = Bodies.rectangle(canvas.width + t/2 - 4, canvas.height/2, t, canvas.height*3, WALL_OPTS);
   Composite.add(world, [ground, leftWall, rightWall]);
 }
 buildBounds();
+
+// Moves the left/right walls outward in real physics coordinates as the
+// camera zooms out, so the play area actually gets wider — not just drawn
+// smaller. Solved so a wall stays pinned to the screen edge: for a world
+// point at the camera's anchor x (canvas.width/2) the zoom doesn't move it,
+// so the wall's world-x must shift by (screen half-width)/zoom to still
+// land exactly at the visual edge.
+function repositionWalls() {
+  const cx = canvas.width / 2;
+  Body.setPosition(leftWall, { x: cx - cx / cameraZoom, y: leftWall.position.y });
+  Body.setPosition(rightWall, { x: cx + cx / cameraZoom, y: rightWall.position.y });
+}
 
 window.addEventListener('resize', () => {
   resize();
@@ -98,10 +158,12 @@ rareImg.src = RARE_IMG_SRC;
 const bodyMeta = new Map();
 const spawnOrder = []; // tracks spawn order so we know which is oldest
 const MAX_PLUSHIES = 100;
+let unlimitedMode = false; // secret toggle — see #secretToggle
 
 function spawnObject(x, y) {
   // enforce the cap by removing the oldest plushie before adding a new one
-  if (spawnOrder.length >= MAX_PLUSHIES) {
+  // (skipped entirely when unlimitedMode is on)
+  if (!unlimitedMode && spawnOrder.length >= MAX_PLUSHIES) {
     const oldestBody = spawnOrder.shift();
     if (oldestBody) {
       Composite.remove(world, oldestBody);
@@ -114,8 +176,9 @@ function spawnObject(x, y) {
   const radius = baseDiameter / 2;
 
   const body = Bodies.circle(x, y, radius, {
-    restitution: 0.5,
-    friction: 0.2,
+    restitution: 0.35,
+    friction: 0.7,
+    frictionStatic: 1.2, // resists initial rolling once nestled against neighbors
     frictionAir: 0.0015,
     density: 0.0022,
     angle: Common.random(0, Math.PI * 2)
@@ -238,12 +301,56 @@ function drawSparkle(ctx, cx, cy, size, alpha) {
   ctx.restore();
 }
 
+let cameraZoom = 1; // eased camera zoom, adjusts when the pile outgrows the screen
+
+// converts a screen-space point (e.g. a click) into world-space coordinates,
+// accounting for the current camera zoom (needed since spawn points are
+// captured from raw pointer events, but the camera may be zoomed out)
+function screenToWorld(sx, sy) {
+  const cx = canvas.width / 2, cy = canvas.height;
+  return {
+    x: (sx - cx) / cameraZoom + cx,
+    y: (sy - cy) / cameraZoom + cy
+  };
+}
+
 function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const t = performance.now() / 1000; // seconds, used to animate the twinkle
-
   const bodies = Composite.allBodies(world);
+
+  // camera zoom + wall-expansion only matters once the plushie cap is off
+  // (unlimitedMode) — with the cap in place, 100 plushies never come close
+  // to overflowing the screen, so this stays fully inactive until then.
+  if (unlimitedMode) {
+    // find how tall the current pile is (topmost edge of any plushie)
+    const TOP_PADDING = 50;
+    let topEdge = canvas.height;
+    for (const body of bodies) {
+      const meta = bodyMeta.get(body.id);
+      if (!meta) continue;
+      const extent = Math.max(meta.drawW, meta.drawH) / 2;
+      const edge = body.position.y - extent;
+      if (edge < topEdge) topEdge = edge;
+    }
+    const usedHeight = canvas.height - topEdge;
+    let targetZoom = usedHeight > canvas.height - TOP_PADDING
+      ? (canvas.height - TOP_PADDING) / usedHeight
+      : 1;
+    targetZoom = Math.max(0.28, Math.min(1, targetZoom));
+    cameraZoom += (targetZoom - cameraZoom) * 0.06; // smooth ease toward target
+    repositionWalls(); // move the actual physics walls outward to match
+  }
+
+  // zoom around the bottom-center, so the "ground" stays anchored in place
+  // as everything scales down to fit
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height);
+  ctx.scale(cameraZoom, cameraZoom);
+  ctx.translate(-canvas.width / 2, -canvas.height);
+
   for (const body of bodies) {
     const meta = bodyMeta.get(body.id);
     if (!meta) continue;
@@ -292,6 +399,8 @@ function render() {
     ctx.restore();
   }
 
+  ctx.restore(); // matches the camera-zoom save
+
   requestAnimationFrame(render);
 }
 
@@ -300,6 +409,26 @@ Runner.run(runner, engine);
 render();
 
 // --- UI wiring ---
+
+// secret unlimited-mode toggle
+const secretToggle = document.getElementById('secretToggle');
+const secretToast = document.getElementById('secretToast');
+let toastTimeout = null;
+
+function showToast(text) {
+  secretToast.textContent = text;
+  secretToast.classList.add('show');
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => secretToast.classList.remove('show'), 1800);
+}
+
+secretToggle.addEventListener('click', (e) => {
+  e.stopPropagation(); // don't let this click also spawn a plushie on the canvas underneath
+  if (unlimitedMode) return; // one-way switch — can't be turned back off
+  unlimitedMode = true;
+  showToast('Unlimited Natie Works');
+});
+
 const HOLD_DELAY = 350;   // time holding before repeat-spawn kicks in
 const SPAWN_COOLDOWN = 70; // ms between repeated spawns while holding
 
@@ -311,15 +440,17 @@ let activePointerId = null;
 function startHold(x, y) {
   lastPointer.x = x;
   lastPointer.y = y;
-  spawnObject(x, y); // immediate spawn on click
+  const world0 = screenToWorld(x, y);
+  spawnObject(world0.x, world0.y); // immediate spawn on click
 
   holdTimeout = setTimeout(() => {
     spawnInterval = setInterval(() => {
       // horizontal jitter so repeated spawns spread out instead of
       // stacking nearly on top of each other (which causes a jarring
       // "pop apart" once the solver resolves the overlap)
-      const jitter = Common.random(-32, 32);
-      spawnObject(lastPointer.x + jitter, lastPointer.y);
+      const jitter = Common.random(-60, 60);
+      const w = screenToWorld(lastPointer.x + jitter, lastPointer.y);
+      spawnObject(w.x, w.y);
     }, SPAWN_COOLDOWN);
   }, HOLD_DELAY);
 }
