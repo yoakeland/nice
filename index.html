@@ -82,6 +82,34 @@
     opacity: 1;
     transform: translateY(0);
   }
+
+  /* plushie counter — only shown once unlimited mode is on, slides in
+     from off-screen rather than just fading in */
+  #plushCounter {
+    position: fixed;
+    bottom: 18px;
+    left: 18px;
+    padding: 10px 18px;
+    border-radius: 14px;
+    background: var(--ink);
+    color: #FFF3B0;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.01em;
+    box-shadow: 0 6px 18px rgba(16,25,46,0.3);
+    z-index: 90;
+    pointer-events: none;
+    transform: translateX(-140%);
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  #plushCounter.show {
+    transform: translateX(0);
+  }
+  #plushCounter b {
+    color: #FFFDE7;
+    font-size: 17px;
+  }
 </style>
 </head>
 <body>
@@ -89,6 +117,7 @@
 <canvas id="world"></canvas>
 <button id="secretToggle" aria-label="secret"></button>
 <div id="secretToast"></div>
+<div id="plushCounter"><b id="plushCount">0</b> plushies</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
 <script>
@@ -96,6 +125,9 @@ const { Engine, Render, Runner, Bodies, Body, Composite, Events, Common } = Matt
 
 const canvas = document.getElementById('world');
 const ctx = canvas.getContext('2d');
+const plushCounter = document.getElementById('plushCounter');
+const plushCount = document.getElementById('plushCount');
+let lastPlushCountShown = -1; // avoids redundant DOM writes when the count hasn't changed
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -342,6 +374,12 @@ function render() {
     targetZoom = Math.max(0.28, Math.min(1, targetZoom));
     cameraZoom += (targetZoom - cameraZoom) * 0.06; // smooth ease toward target
     repositionWalls(); // move the actual physics walls outward to match
+
+    // live plushie count — only write to the DOM when it actually changes
+    if (spawnOrder.length !== lastPlushCountShown) {
+      lastPlushCountShown = spawnOrder.length;
+      plushCount.textContent = lastPlushCountShown;
+    }
   }
 
   // zoom around the bottom-center, so the "ground" stays anchored in place
@@ -427,6 +465,7 @@ secretToggle.addEventListener('click', (e) => {
   if (unlimitedMode) return; // one-way switch — can't be turned back off
   unlimitedMode = true;
   showToast('Unlimited Natie Works');
+  plushCounter.classList.add('show');
 });
 
 const HOLD_DELAY = 350;   // time holding before repeat-spawn kicks in
